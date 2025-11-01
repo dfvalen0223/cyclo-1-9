@@ -1,0 +1,90 @@
+import FreeCAD as App, FreeCADGui as Gui
+import Part, math
+
+# =======================
+# CONFIGURACIÓN DEL PERFIL
+# =======================
+m   = 10.0     # modulo [mm]
+z2  = 10        # No de pasadores (dientes) en la carcasa
+xc  = 0.000    # 
+E   = 1.52     # excentricidad [mm]
+
+modo = "disco"   # "disco" o "lóbulo"
+
+# Densidad de muestreo (más puntos = curva más suave)
+pts_por_lobulo = 360
+
+# =======================
+# MAPEO DE PARÁMETROS
+# =======================
+x = xc
+
+# Radios equivalentes de la forma solicitada
+# R = (m/2)*z2 , Rr = (m/2)*(1 - x) ; N = z2
+R  = 0.5*m*z2
+Rr = 0.5*m*(1.0 - x)
+N  = z2
+
+# =======================
+# FUNCIONES
+# =======================
+def xy(t):
+    """
+    Devuelve App.Vector(x,y,0) usando:
+    X = R*cos(t) - Rr*cos(t + atan2(sin((1-N)*t), (m/(2*E)) - cos((1-N)*t))) - E*cos(N*t)
+    Y = -R*sin(t) + Rr*sin(t + atan2(sin((1-N)*t), (m/(2*E)) - cos((1-N)*t))) + E*sin(N*t)
+    """
+    # Ángulo auxiliar robusto con atan2 
+    theta = math.atan2(math.sin((1.0 - N)*t), (m/(2.0*E)) - math.cos((1.0 - N)*t))
+    x_val = (R*math.cos(t)) - (Rr*math.cos(t + theta)) - (E*math.cos(N*t))
+    y_val = (-R*math.sin(t)) + (Rr*math.sin(t + theta)) + (E*math.sin(N*t))
+    return App.Vector(x_val, y_val, 0)
+
+def muestrear_curva(modo, pts_por_lobulo):
+    z1 = z2 - 1
+    if modo.lower().startswith("lób") or modo.lower().startswith("lob"):
+        # Un solo lóbulo: intervalo 0 .. 2π/(z2-1)
+        period = 2.0*math.pi / z1
+        Np = pts_por_lobulo
+        ts = [i*period/Np for i in range(Np+1)]
+    else:
+        # Disco completo: 0 .. 2π
+        Np = pts_por_lobulo * z1
+        ts = [i*2.0*math.pi/Np for i in range(Np+1)]
+    return [xy(t) for t in ts]
+
+# =======================
+# CONSTRUCCIÓN (Sketch directo, sin Draft)
+# =======================
+doc = App.ActiveDocument or App.newDocument("Cycloidal")
+pts = muestrear_curva(modo, pts_por_lobulo)
+
+cerrado = (modo.lower().startswith("dis"))
+
+# Para curvas cerradas elimina el último punto si es duplicado del primero
+if cerrado and len(pts) > 1:
+    pts = pts[:-1]
+
+# Crea el Sketch
+sk = doc.addObject("Sketcher::SketchObject", "USE Macro v6_gear_profile")
+
+# Crea una BSpline con los puntos y la inserta en el Sketch
+bs = Part.BSplineCurve()
+try:
+    bs.interpolate(pts, cerrado)          # interpolate(points, periodicBool)
+except TypeError:
+    bs.interpolate(pts, Periodic=cerrado) # fallback de firma
+
+sk.addGeometry(bs, False)   # False = no-construcción
+
+# ► Rotar el Sketch al plano XZ (rotación +90° alrededor del eje X)
+sk.Placement = App.Placement(App.Vector(0,0,0), App.Rotation(App.Vector(1,0,0), 90))
+
+doc.recompute()
+
+# Vista
+Gui.ActiveDocument.ActiveView.viewAxonometric()
+Gui.SendMsgToActiveView("ViewFit")
+print("Listo: Sketch en plano XZ ->", sk.Label)
+
+\
